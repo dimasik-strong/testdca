@@ -1,0 +1,20 @@
+exchange:
+  base_url: "https://api.bybit.com"           # вместо api-testnet.bybit.com
+  ws_url: "wss://stream.bybit.com/v5/private"    # вместо stream-testnet.bybit.com
+  api_key: "6Ql0qU9a14o3WP9zod"
+  secret: "cIx1Jk4kxnOstIGBCzWOoSl9OdhrHmuev9Zz"             
+
+bot:
+  symbol: "XRPUSDT"
+  side: "BUY"
+  base_order_qty: 10
+  tp_percent: 0.5
+  so_count: 5
+  so_step_percent: 1.0
+  so_step_multiplier: 1.2
+  so_base_qty: 10
+  so_qty_multiplier: 1.1
+
+runtime:
+  dry_run: false
+  log_level: "debug"
