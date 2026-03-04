@@ -1,14 +1,14 @@
 package exchange
 
 type SymbolInfo struct {
-	TickSize float64 // минимальный шаг цены
-	LotSize  float64 // минимальный шаг количества
-	MinQty   float64 // минимальный объём
+	TickSize float64
+	LotSize  float64
+	MinQty   float64
 }
 
 type Order struct {
 	ID            string
-	ClientOrderID string // orderLinkId для идемпотентности
+	ClientOrderID string
 	Symbol        string
 	Side          string
 	Type          string

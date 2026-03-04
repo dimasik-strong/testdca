@@ -31,26 +31,23 @@ func NewBybitClient(baseURL, apiKey, apiSecret string) *BybitClient {
 	}
 }
 
-// sign generates signature for Bybit API v5
 func (c *BybitClient) sign(payload string) string {
 	h := hmac.New(sha256.New, []byte(c.apiSecret))
 	h.Write([]byte(payload))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// request sends authenticated request to Bybit
 func (c *BybitClient) request(method, path string, params map[string]string) ([]byte, error) {
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	recvWindow := "5000"
 
-	// Сортируем ключи для стабильной подписи
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	// Строим query string для подписи (для GET и POST одинаково)
+	// query string для подписи
 	query := ""
 	for i, k := range keys {
 		if i > 0 {
@@ -78,7 +75,6 @@ func (c *BybitClient) request(method, path string, params map[string]string) ([]
 		}
 
 	case "POST":
-		// Для POST отправляем параметры как x-www-form-urlencoded
 		formData := url.Values{}
 		for k, v := range params {
 			formData.Set(k, v)
@@ -93,7 +89,6 @@ func (c *BybitClient) request(method, path string, params map[string]string) ([]
 		return nil, fmt.Errorf("unsupported method: %s", method)
 	}
 
-	// Общие заголовки аутентификации
 	req.Header.Set("X-BAPI-API-KEY", c.apiKey)
 	req.Header.Set("X-BAPI-TIMESTAMP", timestamp)
 	req.Header.Set("X-BAPI-SIGN", signature)
@@ -115,7 +110,6 @@ func (c *BybitClient) request(method, path string, params map[string]string) ([]
 	return body, nil
 }
 
-// PlaceOrder places an order (market or limit)
 func (c *BybitClient) PlaceOrder(symbol, side, orderType string, quantity, price float64, clientOrderID string) (*Order, error) {
 	params := map[string]string{
 		"symbol":      symbol,
@@ -125,13 +119,13 @@ func (c *BybitClient) PlaceOrder(symbol, side, orderType string, quantity, price
 		"orderLinkId": clientOrderID,
 		"category":    "spot",
 	}
+
 	if orderType == "LIMIT" {
-		params["price"] = strconv.FormatFloat(price, 'f', -1, 64)
-		params["qty"] = strconv.FormatFloat(quantity, 'f', -1, 64)
+		params["price"] = strconv.FormatFloat(price, 'f', 8, 64)
+		params["qty"] = strconv.FormatFloat(quantity, 'f', 2, 64)
 	} else {
-		// market order: quote order qty in USDT
 		params["marketUnit"] = "quoteCoin"
-		params["qty"] = strconv.FormatFloat(quantity, 'f', -1, 64)
+		params["qty"] = strconv.FormatFloat(quantity, 'f', 2, 64)
 	}
 
 	body, err := c.request("POST", "/v5/order/create", params)
@@ -164,7 +158,6 @@ func (c *BybitClient) PlaceOrder(symbol, side, orderType string, quantity, price
 	}, nil
 }
 
-// CancelOrder cancels an order
 func (c *BybitClient) CancelOrder(symbol, orderID string) error {
 	params := map[string]string{
 		"symbol":   symbol,
@@ -175,7 +168,6 @@ func (c *BybitClient) CancelOrder(symbol, orderID string) error {
 	return err
 }
 
-// GetSymbolInfo fetches tick size and lot size for symbol
 func (c *BybitClient) GetSymbolInfo(symbol string) (*SymbolInfo, error) {
 	params := map[string]string{
 		"symbol":   symbol,

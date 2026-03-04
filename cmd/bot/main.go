@@ -34,7 +34,6 @@ func main() {
 	}
 	log.Info("symbol info", "tickSize", info.TickSize, "lotSize", info.LotSize)
 
-	// Создаём WebSocket клиент
 	ws := exchange.NewWSClient(cfg.Exchange.WSURL, cfg.Exchange.APIKey, cfg.Exchange.Secret, cfg.Bot.Symbol, log)
 	if err := ws.Connect(); err != nil {
 		log.Error("failed to connect WebSocket", "error", err)
@@ -42,7 +41,6 @@ func main() {
 	}
 	defer ws.Close()
 
-	// Создаём конфиг для движка
 	engCfg := &engine.Config{
 		TpPercent:        cfg.Bot.TpPercent,
 		SOCount:          cfg.Bot.SOCount,
@@ -54,7 +52,6 @@ func main() {
 
 	eng := engine.NewEngine(ex, cfg.Bot.Symbol, cfg.Bot.Side, cfg.Bot.BaseOrderQty, engCfg, info.TickSize, info.LotSize, log)
 
-	// Запускаем сделку (выставляем маркет-ордер)
 	if err := eng.Start(); err != nil {
 		log.Error("engine start failed", "error", err)
 		os.Exit(1)
@@ -62,11 +59,9 @@ func main() {
 
 	log.Info("engine started, waiting for events")
 
-	// Канал для сигнала завершения
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Основной цикл обработки событий
 loop:
 	for {
 		select {
@@ -77,14 +72,13 @@ loop:
 				eng.OnExecution(e)
 			case exchange.OrderEvent:
 				log.Info("order event", "symbol", e.Symbol, "orderID", e.OrderID, "status", e.Status)
-				// Можно использовать для отслеживания изменений ордеров, но сейчас не требуется
 			}
 		case <-sigCh:
-			log.Info("shutting down")
+			log.Info("shutting down, cancelling all orders...")
+			eng.CancelAllOrders()
 			break loop
 		}
 	}
 
-	// При желании здесь можно отменить все активные ордера
 	log.Info("bye")
 }

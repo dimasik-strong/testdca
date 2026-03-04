@@ -34,12 +34,13 @@ type Engine struct {
 	lotSize  float64
 	mu       sync.RWMutex
 
-	entryPrice    float64
-	totalQty      float64
-	marketOrderID string
-	tpOrderID     string
-	soOrderIDs    []string
-	active        bool
+	entryPrice     float64
+	totalQty       float64
+	marketOrderID  string
+	tpOrderID      string
+	soOrderIDs     []string
+	active         bool
+	entryProcessed bool
 }
 
 func NewEngine(ex *exchange.BybitClient, symbol, side string, baseQty float64, cfg *Config, tickSize, lotSize float64, logger *slog.Logger) *Engine {
@@ -68,6 +69,7 @@ func (e *Engine) Start() error {
 	}
 	e.marketOrderID = order.ID
 	e.active = true
+	e.entryProcessed = false
 	e.logger.Info("market order placed", "orderID", order.ID)
 	return nil
 }
@@ -83,20 +85,29 @@ func (e *Engine) OnExecution(exec exchange.ExecutionEvent) {
 		return
 	}
 
-	// Проверяем, относится ли исполнение к нашей сделке (входной ордер)
+	// Исполнение маркет-ордера
 	if exec.OrderID == e.marketOrderID {
-		e.logger.Info("entry fill detected", "price", exec.Price, "qty", exec.Quantity)
-		e.entryPrice = exec.Price
-		e.totalQty = exec.Quantity
-		e.logger.Info("entry fill processed", "entryPrice", e.entryPrice, "totalQty", e.totalQty)
-
-		// Выставляем TP и сетку
-		e.placeTP()
-		e.placeSafetyOrders()
+		// Если это первое исполнение
+		if !e.entryProcessed {
+			e.entryPrice = exec.Price
+			e.totalQty = exec.Quantity
+			e.entryProcessed = true
+			e.logger.Info("market order fill, placing TP and safety orders", "price", exec.Price, "qty", exec.Quantity)
+			e.placeTP()
+			e.placeSafetyOrders()
+		} else {
+			// Дополнительные частичные исполнения (редко)
+			newTotal := e.totalQty + exec.Quantity
+			if newTotal > 0 {
+				e.entryPrice = (e.entryPrice*e.totalQty + exec.Price*exec.Quantity) / newTotal
+				e.totalQty = newTotal
+				e.logger.Info("additional market order fill, updated avg", "avg", e.entryPrice, "totalQty", e.totalQty)
+			}
+		}
 		return
 	}
 
-	// Проверяем, не исполнился ли TP
+	// Исполнение TP
 	if exec.OrderID == e.tpOrderID && e.tpOrderID != "" {
 		e.logger.Info("TP filled, trade closed")
 		e.active = false
@@ -104,7 +115,7 @@ func (e *Engine) OnExecution(exec exchange.ExecutionEvent) {
 		return
 	}
 
-	// Проверяем, не исполнился ли страховочный ордер
+	// Исполнение страховочного ордера
 	for _, soID := range e.soOrderIDs {
 		if exec.OrderID == soID {
 			e.logger.Info("safety order filled", "price", exec.Price, "qty", exec.Quantity)
@@ -132,7 +143,6 @@ func (e *Engine) placeTP() {
 		return
 	}
 
-	// Отменяем старый TP, если есть
 	if e.tpOrderID != "" {
 		e.logger.Info("cancelling old TP", "orderID", e.tpOrderID)
 		if err := e.ex.CancelOrder(e.symbol, e.tpOrderID); err != nil {
@@ -141,7 +151,6 @@ func (e *Engine) placeTP() {
 		e.tpOrderID = ""
 	}
 
-	// Рассчитываем цену TP
 	var tpPrice float64
 	if e.side == "BUY" {
 		tpPrice = e.entryPrice * (1 + e.cfg.TpPercent/100)
@@ -151,12 +160,8 @@ func (e *Engine) placeTP() {
 	tpPrice = roundPrice(tpPrice, e.tickSize)
 	e.logger.Debug("calculated TP price", "entryPrice", e.entryPrice, "tpPercent", e.cfg.TpPercent, "tpPrice", tpPrice)
 
-	// Округляем количество, если lotSize > 0
-	qty := e.totalQty
-	if e.lotSize > 0 {
-		qty = roundQty(qty, e.lotSize)
-		e.logger.Debug("rounded qty", "original", e.totalQty, "rounded", qty, "lotSize", e.lotSize)
-	}
+	qty := roundQty(e.totalQty, e.lotSize)
+	e.logger.Debug("rounded qty for TP", "original", e.totalQty, "rounded", qty, "lotSize", e.lotSize)
 
 	clientOrderID := fmt.Sprintf("tp-%d", time.Now().UnixNano())
 	order, err := e.ex.PlaceOrder(e.symbol, oppositeSide(e.side), "LIMIT", qty, tpPrice, clientOrderID)
@@ -168,7 +173,6 @@ func (e *Engine) placeTP() {
 	e.logger.Info("TP placed successfully", "price", tpPrice, "qty", qty, "orderID", order.ID)
 }
 
-// calculateSafetyOrders вычисляет список страховочных ордеров согласно конфигурации
 func (e *Engine) calculateSafetyOrders() ([]SafetyOrder, error) {
 	if e.entryPrice == 0 {
 		return nil, fmt.Errorf("entry price not set")
@@ -179,7 +183,6 @@ func (e *Engine) calculateSafetyOrders() ([]SafetyOrder, error) {
 
 	orders := make([]SafetyOrder, e.cfg.SOCount)
 	for i := 0; i < e.cfg.SOCount; i++ {
-		// шаг в процентах: базовый * множитель^i
 		stepPercent := e.cfg.SOStepPercent * math.Pow(e.cfg.SOStepMultiplier, float64(i))
 
 		var price float64
@@ -200,6 +203,10 @@ func (e *Engine) calculateSafetyOrders() ([]SafetyOrder, error) {
 }
 
 func (e *Engine) placeSafetyOrders() {
+	if len(e.soOrderIDs) > 0 {
+		e.logger.Debug("safety orders already placed, skipping")
+		return
+	}
 	orders, err := e.calculateSafetyOrders()
 	if err != nil {
 		e.logger.Error("failed to calculate safety orders", "error", err)
@@ -236,6 +243,29 @@ func (e *Engine) removeSO(id string) {
 	}
 }
 
+func (e *Engine) CancelAllOrders() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.active {
+		return
+	}
+	if e.tpOrderID != "" {
+		e.logger.Info("cancelling TP on shutdown", "orderID", e.tpOrderID)
+		if err := e.ex.CancelOrder(e.symbol, e.tpOrderID); err != nil {
+			e.logger.Error("failed to cancel TP on shutdown", "error", err)
+		}
+		e.tpOrderID = ""
+	}
+	for _, id := range e.soOrderIDs {
+		e.logger.Info("cancelling SO on shutdown", "orderID", id)
+		if err := e.ex.CancelOrder(e.symbol, id); err != nil {
+			e.logger.Error("failed to cancel SO on shutdown", "orderID", id, "error", err)
+		}
+	}
+	e.soOrderIDs = []string{}
+	e.logger.Info("all orders cancelled on shutdown")
+}
+
 func roundPrice(price, tickSize float64) float64 {
 	if tickSize <= 0 {
 		return price
@@ -244,10 +274,10 @@ func roundPrice(price, tickSize float64) float64 {
 }
 
 func roundQty(qty, lotSize float64) float64 {
-	if lotSize <= 0 {
-		return qty
+	if lotSize > 0 {
+		return math.Round(qty/lotSize) * lotSize
 	}
-	return math.Round(qty/lotSize) * lotSize
+	return math.Round(qty*100) / 100
 }
 
 func oppositeSide(side string) string {

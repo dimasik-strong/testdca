@@ -1,8 +1,8 @@
 exchange:
-  base_url: "https://api.bybit.com"           # вместо api-testnet.bybit.com
-  ws_url: "wss://stream.bybit.com/v5/private"    # вместо stream-testnet.bybit.com
-  api_key: "6Ql0qU9a14o3WP9zod"
-  secret: "cIx1Jk4kxnOstIGBCzWOoSl9OdhrHmuev9Zz"             
+  base_url: "https://api.bybit.com"          
+  ws_url: "wss://stream.bybit.com/v5/private"    
+  api_key: ""
+  secret: ""             
 
 bot:
   symbol: "XRPUSDT"

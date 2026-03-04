@@ -27,8 +27,8 @@ type WSClient struct {
 type ExecutionEvent struct {
 	Symbol   string  `json:"symbol"`
 	Side     string  `json:"side"`
-	Price    float64 `json:"execPrice,string"` // важно: ,string
-	Quantity float64 `json:"execQty,string"`   // важно: ,string
+	Price    float64 `json:"execPrice,string"`
+	Quantity float64 `json:"execQty,string"`
 	OrderID  string  `json:"orderId"`
 	ExecID   string  `json:"execId"`
 }
@@ -37,8 +37,8 @@ type OrderEvent struct {
 	Symbol   string  `json:"symbol"`
 	OrderID  string  `json:"orderId"`
 	Status   string  `json:"orderStatus"`
-	Price    float64 `json:"price,string"` // важно: ,string
-	Quantity float64 `json:"qty,string"`   // важно: ,string
+	Price    float64 `json:"price,string"`
+	Quantity float64 `json:"qty,string"`
 	Side     string  `json:"side"`
 }
 
@@ -54,7 +54,6 @@ func NewWSClient(url, apiKey, apiSecret, symbol string, logger *slog.Logger) *WS
 	}
 }
 
-// Connect устанавливает соединение с WebSocket, выполняет аутентификацию и подписку.
 func (c *WSClient) Connect() error {
 	var err error
 	c.conn, _, err = websocket.DefaultDialer.Dial(c.url, nil)
@@ -63,12 +62,10 @@ func (c *WSClient) Connect() error {
 	}
 	c.logger.Info("WebSocket connected")
 
-	// Аутентификация (обязательна для приватных каналов)
 	if c.apiKey != "" && c.apiSecret != "" {
-		expires := time.Now().UnixMilli() + 30000 // 30 секунд в миллисекундах
+		expires := time.Now().UnixMilli() + 30000
 		expiresStr := strconv.FormatInt(expires, 10)
 
-		// Строка для подписи: "GET/realtime" + expires (как строка)
 		signPayload := "GET/realtime" + expiresStr
 		c.logger.Debug("Sign payload", "payload", signPayload)
 
@@ -76,7 +73,6 @@ func (c *WSClient) Connect() error {
 		h.Write([]byte(signPayload))
 		signature := hex.EncodeToString(h.Sum(nil))
 
-		// Сообщение аутентификации: expires передаём как число (int64)
 		authMsg := map[string]interface{}{
 			"op":   "auth",
 			"args": []interface{}{c.apiKey, expires, signature},
@@ -89,7 +85,6 @@ func (c *WSClient) Connect() error {
 		c.logger.Info("Authentication sent")
 	}
 
-	// Подписка на приватные каналы
 	subMsg := map[string]interface{}{
 		"op": "subscribe",
 		"args": []string{
@@ -103,16 +98,13 @@ func (c *WSClient) Connect() error {
 	}
 	c.logger.Info("Subscribed to private channels")
 
-	// Запускаем горутину для чтения сообщений
 	go c.readPump()
 
-	// Запускаем пингер для поддержания соединения
 	go c.pingPump()
 
 	return nil
 }
 
-// readPump читает сообщения из WebSocket и отправляет их в канал Events.
 func (c *WSClient) readPump() {
 	defer close(c.done)
 	for {
@@ -130,7 +122,6 @@ func (c *WSClient) readPump() {
 
 		c.logger.Debug("WS message", "msg", raw)
 
-		// Проверяем тип сообщения (ответы на запросы)
 		if op, ok := raw["op"].(string); ok {
 			switch op {
 			case "auth":
@@ -149,7 +140,6 @@ func (c *WSClient) readPump() {
 			continue
 		}
 
-		// Если есть поле "data" — обрабатываем (может быть массивом или объектом)
 		if dataVal, ok := raw["data"]; ok {
 			switch v := dataVal.(type) {
 			case []interface{}:
@@ -165,9 +155,7 @@ func (c *WSClient) readPump() {
 	}
 }
 
-// processData обрабатывает один элемент data и отправляет событие в канал
 func (c *WSClient) processData(data map[string]interface{}) {
-	// Определяем тип по наличию execId
 	if _, hasExec := data["execId"]; hasExec {
 		var ev ExecutionEvent
 		b, _ := json.Marshal(data)
@@ -187,7 +175,6 @@ func (c *WSClient) processData(data map[string]interface{}) {
 	}
 }
 
-// pingPump отправляет ping для поддержания соединения.
 func (c *WSClient) pingPump() {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
